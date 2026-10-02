@@ -77,6 +77,10 @@ def existing_panel_jobs(token: str):
     ]
 
 
+def receipt_json(receipt: dict) -> str:
+    return json.dumps(receipt, indent=2, sort_keys=True, default=str) + "\n"
+
+
 def validate_job_receipt(job: dict, *, probe: str, job_command: str) -> None:
     if job.get("docker_image") != IMAGE or job.get("flavor") != "a100-large":
         raise RuntimeError("submitted job image or hardware does not match the signed panel")
@@ -110,10 +114,11 @@ def submit_probe(probe: str, public_key_b64: str, bootstrap_b64: str, receipts: 
     try:
         receipt = asdict(HfApi(token=os.environ["HF_TOKEN"]).inspect_job(job_id=job_id))
         validate_job_receipt(receipt, probe=probe, job_command=job_command)
+        serialized_receipt = receipt_json(receipt)
     except Exception:
         subprocess.run(["hf", "jobs", "cancel", job_id], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         raise
-    (receipts / f"{probe}.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    (receipts / f"{probe}.json").write_text(serialized_receipt)
 
 
 def main() -> int:

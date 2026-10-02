@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime, timezone
 import importlib.util
 import json
 import subprocess
@@ -58,6 +59,11 @@ class SignedV9PanelTests(unittest.TestCase):
         with patch.object(submission, "HfApi", FakeApi):
             found = submission.existing_panel_jobs("hf_test_token")
         self.assertEqual(len(found), 2)
+
+    def test_receipt_serialization_is_safe_for_hub_datetime_fields(self):
+        text = submission.receipt_json({"created_at": datetime(2026, 10, 2, tzinfo=timezone.utc)})
+        parsed = json.loads(text)
+        self.assertEqual(parsed["created_at"], "2026-10-02 00:00:00+00:00")
 
     def test_receipt_requires_the_signed_provider_identity(self):
         public_key_b64, bootstrap_b64 = submission.require_local_material()
