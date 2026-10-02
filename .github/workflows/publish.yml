@@ -18,8 +18,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@ee4ca427a2f43b6a16632044ca514c076267da23
+      - id: build
+        uses: docker/build-push-action@ee4ca427a2f43b6a16632044ca514c076267da23
         with:
           context: .
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/nist-grounded-v9-bootstrap:v1
+      - name: Verify published trust anchor and record digest
+        run: |
+          image="ghcr.io/${{ github.repository_owner }}/nist-grounded-v9-bootstrap@${{ steps.build.outputs.digest }}"
+          docker run --rm --entrypoint /bin/sh "$image" -c 'sha256sum /trust/v9-grounded.pub /usr/local/bin/v9-bootstrap; test -x /usr/local/bin/cosign; test -x /usr/local/bin/uv'
+          printf 'V9_BOOTSTRAP_IMAGE=%s\n' "$image"
