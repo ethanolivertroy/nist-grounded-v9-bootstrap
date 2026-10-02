@@ -16,36 +16,74 @@ permissions:
 jobs:
   submit:
     runs-on: ubuntu-24.04
+    environment:
+      name: v9-paid-submission
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
       - name: Install the pinned Hub client
         run: python -m pip install --disable-pip-version-check 'huggingface_hub==1.24.0'
-      - name: Submit only the signed registered probe
-        id: submit
+      - name: Reject a duplicate signed probe before creating GPU work
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PROBE: ${{ inputs.probe }}
         run: |
           set -euo pipefail
-          payload_sha256=428bbba1509e0be3626ee484b8a97002d6c8e598dc48179f1cdddeb4d12f2a04
+          expected_name="v9-${PROBE}-signed-base"
+          hf jobs list --all --limit 0 --format json > existing-jobs.json
+          EXPECTED_NAME="$expected_name" python - <<'PY'
+          import json
+          import os
+          jobs = json.load(open("existing-jobs.json", encoding="utf-8"))
+          name = os.environ["EXPECTED_NAME"]
+          if any((job.get("labels") or {}).get("name") == name for job in jobs):
+              raise SystemExit(f"refusing duplicate signed V9 probe: {name}")
+          PY
+      - name: Submit only the signed registered probe and verify the returned Job
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          PROBE: ${{ inputs.probe }}
+        run: |
+          set -euo pipefail
+          payload_sha256=e4f320adbbd52a060f298320aaa12a6e82776b7846a860cd3fe6165a44bbd939
           public_key_sha256=40e2e00f2f9093f92f11888a347ae5c16ce5852940bcefa42c912d875b5c7cc4
+          image=ghcr.io/astral-sh/uv@sha256:85d4cb1afa769a7338e095b927bee941cf5ec92266c7424b3f6c0f2748567248
+          inputs_volume=hf://datasets/ethanolivertroy/v9-grounded-eval-inputs@cb16deb80345dc94c94a41e89ed07e822ac8bf7a:/inputs:ro
+          job_name="v9-${PROBE}-signed-base"
           test "$(sha256sum .v9_payload/v9_payload.tar | cut -d' ' -f1)" = "$payload_sha256"
           test "$(sha256sum trust/v9-package-ed25519.pub | cut -d' ' -f1)" = "$public_key_sha256"
           bootstrap_b64="$(base64 -w0 v9_hf_job_bootstrap.sh)"
           public_key_b64="$(base64 -w0 trust/v9-package-ed25519.pub)"
           job_command="umask 077; printf '%s' '$bootstrap_b64' | base64 -d >/tmp/v9-bootstrap; chmod 0700 /tmp/v9-bootstrap; V9_PUBLIC_KEY_B64='$public_key_b64' V9_PAYLOAD_SHA256='$payload_sha256' /bin/sh /tmp/v9-bootstrap '$PROBE'"
-          job_output="$(hf jobs run --detach --flavor a100-large --timeout 30m --name "v9-${PROBE}-signed-base" --label v9-signed --label "payload-${payload_sha256}" --secrets HF_TOKEN -v .v9_payload:/signed:ro -v hf://datasets/ethanolivertroy/v9-grounded-eval-inputs:/inputs:ro ghcr.io/astral-sh/uv@sha256:85d4cb1afa769a7338e095b927bee941cf5ec92266c7424b3f6c0f2748567248 /bin/sh -c "$job_command")"
-          printf '%s\n' "$job_output"
-          job_id="$(JOB_OUTPUT="$job_output" python -c 'import os,re; m=re.search(r"(?:Job ID|job id)[:\\s]+([A-Za-z0-9_-]+)", os.environ["JOB_OUTPUT"]); print(m.group(1) if m else "")')"
+          job_id="$(hf --format quiet jobs run --detach --flavor a100-large --timeout 30m --name "$job_name" --label v9-signed --label "payload-${payload_sha256}" --secrets HF_TOKEN -v .v9_payload:/signed:ro -v "$inputs_volume" "$image" /bin/sh -c "$job_command")"
           test -n "$job_id"
-          hf jobs inspect "$job_id" --json > "v9-${PROBE}-submission.json"
-          printf 'job_id=%s\n' "$job_id" >> "$GITHUB_OUTPUT"
+          hf jobs inspect "$job_id" --format json > "${job_name}-submission.json"
+          JOB_ID="$job_id" JOB_NAME="$job_name" IMAGE="$image" PAYLOAD_LABEL="payload-${payload_sha256}" python - <<'PY'
+          import json
+          import os
+          import subprocess
+          path = f"{os.environ['JOB_NAME']}-submission.json"
+          job = json.load(open(path, encoding="utf-8"))
+          labels = job.get("labels") or {}
+          valid = (
+              job.get("docker_image") == os.environ["IMAGE"]
+              and job.get("flavor") == "a100-large"
+              and labels.get("name") == os.environ["JOB_NAME"]
+              and labels.get("v9-signed") in ("", "true", "1", None)
+              and labels.get(os.environ["PAYLOAD_LABEL"]) in ("", "true", "1", None)
+              and any(volume.get("mount_path") == "/inputs" and volume.get("revision") == "cb16deb80345dc94c94a41e89ed07e822ac8bf7a" and volume.get("read_only") is True for volume in (job.get("volumes") or []))
+          )
+          if not valid:
+              subprocess.run(["hf", "jobs", "cancel", os.environ["JOB_ID"]], check=False)
+              raise SystemExit("HF Job receipt does not match the signed V9 submission contract; cancellation requested")
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: v9-${{ inputs.probe }}-submission
-          path: v9-${{ inputs.probe }}-submission.json
+          path: v9-${{ inputs.probe }}-signed-base-submission.json
           if-no-files-found: error

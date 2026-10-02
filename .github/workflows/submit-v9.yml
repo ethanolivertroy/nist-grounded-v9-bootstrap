@@ -1,38 +1,28 @@
-name: Submit signed V9 base probes
+name: Submit signed V9 base-probe panel
 
 on:
   workflow_dispatch:
-    inputs:
-      probe:
-        description: Exact signed probe to submit
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - qwen25-32b-instruct
-          - qwen25-coder-32b-instruct
-          - gpt-oss-20b
 
 permissions:
   contents: read
 
+concurrency:
+  group: v9-paid-base-probe-panel
+  cancel-in-progress: false
+
 jobs:
-  qwen25-32b-instruct:
-    if: ${{ inputs.probe == 'all' || inputs.probe == 'qwen25-32b-instruct' }}
+  qwen25_32b_instruct:
     uses: ./.github/workflows/_submit-signed-v9-probe.yml
     with:
-      probe: qwen25-32b-instruct
+      probe: qwen25_32b_instruct
     secrets: inherit
-  qwen25-coder-32b-instruct:
-    if: ${{ inputs.probe == 'all' || inputs.probe == 'qwen25-coder-32b-instruct' }}
+  qwen25_coder_32b:
     uses: ./.github/workflows/_submit-signed-v9-probe.yml
     with:
-      probe: qwen25-coder-32b-instruct
+      probe: qwen25_coder_32b
     secrets: inherit
-  gpt-oss-20b:
-    if: ${{ inputs.probe == 'all' || inputs.probe == 'gpt-oss-20b' }}
+  gpt_oss_20b:
     uses: ./.github/workflows/_submit-signed-v9-probe.yml
     with:
-      probe: gpt-oss-20b
+      probe: gpt_oss_20b
     secrets: inherit

@@ -1,7 +1,13 @@
-# Private V9 grounded-evaluation bootstrap
+# V9 signed base-probe submission root
 
-This private repository builds the immutable bootstrap image used only for the V9 **base-only** capability probes in `nist-cybersecurity-mlx-pipeline`.
+This public repository is a deliberately small, auditable control plane for exactly one V9 *base-only* capability panel. It contains no private key, token, frozen-evaluation input, training corpus, or adapter.
 
-The image embeds the public half of a dedicated Cosign signing key. At job startup it verifies a signed evaluator payload before extracting it into a root-owned, read-only runtime and dropping privileges. The signed payload, not the job command line, fixes the three candidate revisions and deterministic generation contract (`max_new_tokens=256`, `do_sample=false`).
+## What makes a paid job admissible
 
-Scope: this bootstrap does **not** admit new data, train an adapter, or authorize release.
+1. An offline, user-controlled Ed25519 key signs the immutable evaluator payload.
+2. The manually dispatched GitHub Action in this repository base64-inlines the verified bootstrap into an HF Job running the official, digest-pinned UV image.
+3. The bootstrap verifies the payload signature and hash, extracts an immutable runtime, enforces deterministic generation (`max_new_tokens=256`, `do_sample=false`), and accepts only the three registered base probes.
+4. The action mounts the held-out inputs from a *private, revision-pinned* Hugging Face Dataset and the bootstrap checks its signed manifest hash.
+5. GitHub Environment `v9-paid-submission` gates access to the HF token; the workflow rejects duplicate probe names and verifies the returned job receipt, cancelling a mismatched job.
+
+Scope is intentionally narrow: no corpus admission, SFT/adapter training, model release, or additional candidate is authorized here.

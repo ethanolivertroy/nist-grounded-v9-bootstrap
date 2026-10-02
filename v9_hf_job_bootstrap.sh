@@ -18,10 +18,18 @@ export PYTHONDONTWRITEBYTECODE=1
 payload=/signed/v9_payload.tar
 signature=/signed/v9_payload.tar.sig
 [ -f "$payload" ] && [ -f "$signature" ] || { echo "signed payload is missing" >&2; exit 66; }
-printf '%s' "$V9_PUBLIC_KEY_B64" | base64 -d > /tmp/v9-ed25519.pub
+verified_workdir="$(mktemp -d /tmp/v9-signed.XXXXXX)"
+chmod 0700 "$verified_workdir"
+cp -- "$payload" "$verified_workdir/payload.tar"
+cp -- "$signature" "$verified_workdir/payload.sig"
+chmod 0400 "$verified_workdir/payload.tar" "$verified_workdir/payload.sig"
+payload="$verified_workdir/payload.tar"
+signature="$verified_workdir/payload.sig"
+printf '%s' "$V9_PUBLIC_KEY_B64" | base64 -d > "$verified_workdir/v9-ed25519.pub"
+chmod 0400 "$verified_workdir/v9-ed25519.pub"
 actual_payload_sha256="$(sha256sum "$payload" | cut -d' ' -f1)"
 [ "$actual_payload_sha256" = "$V9_PAYLOAD_SHA256" ] || { echo "payload digest mismatch" >&2; exit 67; }
-openssl pkeyutl -verify -rawin -pubin -inkey /tmp/v9-ed25519.pub -in "$payload" -sigfile "$signature" >/dev/null || { echo "payload signature verification failed" >&2; exit 68; }
+openssl pkeyutl -verify -rawin -pubin -inkey "$verified_workdir/v9-ed25519.pub" -in "$payload" -sigfile "$signature" >/dev/null || { echo "payload signature verification failed" >&2; exit 68; }
 
 verified_root=/opt/v9_verified
 rm -rf "$verified_root"
@@ -51,13 +59,24 @@ PY
 model_id="$(read_probe_field model_id)"
 revision="$(read_probe_field revision)"
 report_repo="$(read_probe_field report_repo)"
+expected_input_manifest_sha256="$(/usr/local/bin/python - "$verified_root/run_contract.json" <<'PY'
+import json
+import sys
+contract = json.load(open(sys.argv[1], encoding="utf-8"))
+value = contract.get("input_dataset", {}).get("input_manifest_sha256")
+if not isinstance(value, str) or len(value) != 64:
+    raise SystemExit("signed input-dataset manifest hash is missing")
+print(value)
+PY
+)"
+test "$(sha256sum /inputs/v9_input_manifest.json | cut -d' ' -f1)" = "$expected_input_manifest_sha256" || { echo "input dataset manifest hash mismatch" >&2; exit 70; }
 mkdir -p /tmp/v9-home/.cache
 chown -R 65532:65532 /tmp/v9-home
 export HF_GROUNDED_PROJECT_ROOT="$verified_root/runtime"
 export HOME=/tmp/v9-home
 export UV_CACHE_DIR=/tmp/v9-home/.cache/uv
 exec setpriv --reuid=65532 --regid=65532 --clear-groups --inh-caps=-all \
-  /usr/local/bin/uv run --python /usr/local/bin/python "$verified_root/runtime/scripts/eval_grounded_hf.py" \
+  /usr/local/bin/uv run --locked --python /usr/local/bin/python "$verified_root/runtime/scripts/eval_grounded_hf.py" \
   --base-model "$model_id" \
   --base-revision "$revision" \
   --report-repo "$report_repo" \
