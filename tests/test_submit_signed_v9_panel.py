@@ -1,6 +1,7 @@
 import base64
 import importlib.util
 import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -19,6 +20,26 @@ class SignedV9PanelTests(unittest.TestCase):
         self.assertNotIn("$public_key_b64", command)
         self.assertEqual(base64.b64decode(public_key_b64), submission.PUBLIC_KEY.read_bytes())
         self.assertIn(submission.PAYLOAD_SHA256, command)
+
+    def test_command_exports_public_key_and_payload_digest_to_the_child_bootstrap(self):
+        public_key_b64, _ = submission.require_local_material()
+        child = b'#!/bin/sh\ntest "$V9_PUBLIC_KEY_B64" = "$EXPECTED_PUBLIC_KEY"\ntest "$V9_PAYLOAD_SHA256" = "$EXPECTED_PAYLOAD_SHA"\n'
+        command = submission.build_job_command(
+            "qwen25_32b_instruct",
+            public_key_b64,
+            base64.b64encode(child).decode("ascii"),
+        )
+        completed = subprocess.run(
+            ["/bin/sh", "-c", command],
+            env={
+                "PATH": "/usr/bin:/bin",
+                "EXPECTED_PUBLIC_KEY": public_key_b64,
+                "EXPECTED_PAYLOAD_SHA": submission.PAYLOAD_SHA256,
+            },
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_receipt_requires_the_signed_provider_identity(self):
         public_key_b64, bootstrap_b64 = submission.require_local_material()

@@ -60,9 +60,7 @@ def build_job_command(probe: str, public_key_b64: str, bootstrap_b64: str) -> st
         "umask 077",
         f"printf %s {shlex.quote(bootstrap_b64)} | base64 -d > /tmp/v9-bootstrap",
         "chmod 0700 /tmp/v9-bootstrap",
-        f"V9_PUBLIC_KEY_B64={shlex.quote(public_key_b64)}",
-        f"V9_PAYLOAD_SHA256={PAYLOAD_SHA256}",
-        f"/bin/sh /tmp/v9-bootstrap {shlex.quote(probe)}",
+        f"env V9_PUBLIC_KEY_B64={shlex.quote(public_key_b64)} V9_PAYLOAD_SHA256={PAYLOAD_SHA256} /bin/sh /tmp/v9-bootstrap {shlex.quote(probe)}",
     ]
     return "; ".join(parts)
 
