@@ -3,6 +3,8 @@ import importlib.util
 import json
 import subprocess
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +42,22 @@ class SignedV9PanelTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_replay_guard_reads_hub_api_objects_not_cli_json(self):
+        class FakeApi:
+            def __init__(self, token):
+                self.token = token
+
+            def list_jobs(self):
+                return [
+                    SimpleNamespace(labels={"v9-panel": submission.PANEL_LABEL}),
+                    SimpleNamespace(labels={"v9-job-name": "v9-old-signed-base-probe"}),
+                    SimpleNamespace(labels={"scope": "unrelated"}),
+                ]
+
+        with patch.object(submission, "HfApi", FakeApi):
+            found = submission.existing_panel_jobs("hf_test_token")
+        self.assertEqual(len(found), 2)
 
     def test_receipt_requires_the_signed_provider_identity(self):
         public_key_b64, bootstrap_b64 = submission.require_local_material()

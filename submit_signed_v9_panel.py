@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from dataclasses import asdict
 import hashlib
 import json
 import os
@@ -12,6 +13,8 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+
+from huggingface_hub import HfApi
 
 ROOT = Path(__file__).resolve().parent
 PAYLOAD = ROOT / ".v9_payload/v9_payload.tar"
@@ -65,19 +68,12 @@ def build_job_command(probe: str, public_key_b64: str, bootstrap_b64: str) -> st
     return "; ".join(parts)
 
 
-def existing_panel_jobs() -> list[dict]:
-    raw = run(["hf", "--format", "json", "jobs", "list", "--all", "--limit", "0"])
-    jobs = json.loads(raw)
-    if not isinstance(jobs, list):
-        raise RuntimeError("HF Jobs list returned a non-list")
+def existing_panel_jobs(token: str):
     return [
         job
-        for job in jobs
-        if isinstance(job, dict)
-        and (
-            (isinstance(job.get("labels"), dict) and job["labels"].get("v9-panel") == PANEL_LABEL)
-            or str(job.get("name", "")).startswith("v9-")
-        )
+        for job in HfApi(token=token).list_jobs()
+        if (job.labels or {}).get("v9-panel") == PANEL_LABEL
+        or str((job.labels or {}).get("v9-job-name", "")).startswith("v9-")
     ]
 
 
@@ -112,7 +108,7 @@ def submit_probe(probe: str, public_key_b64: str, bootstrap_b64: str, receipts: 
     if not re.fullmatch(r"[0-9a-f]{24}", job_id):
         raise RuntimeError("HF CLI quiet result was not an exact job ID")
     try:
-        receipt = json.loads(run(["hf", "--format", "json", "jobs", "inspect", job_id]))
+        receipt = asdict(HfApi(token=os.environ["HF_TOKEN"]).inspect_job(job_id=job_id))
         validate_job_receipt(receipt, probe=probe, job_command=job_command)
     except Exception:
         subprocess.run(["hf", "jobs", "cancel", job_id], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -131,7 +127,8 @@ def main() -> int:
         return 0
     if not os.environ.get("HF_TOKEN", "").startswith("hf_"):
         raise RuntimeError("protected Environment did not provide a Hugging Face token")
-    if existing_panel_jobs():
+    token = os.environ["HF_TOKEN"]
+    if existing_panel_jobs(token):
         raise RuntimeError("a V9 panel job already exists; a new signed package is required before any replay")
     receipts = ROOT / "submission-receipts"
     receipts.mkdir(exist_ok=False)
