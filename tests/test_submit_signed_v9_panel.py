@@ -1,8 +1,11 @@
 import base64
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import importlib.util
 import json
+import os
 import subprocess
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -64,6 +67,38 @@ class SignedV9PanelTests(unittest.TestCase):
         text = submission.receipt_json({"created_at": datetime(2026, 10, 2, tzinfo=timezone.utc)})
         parsed = json.loads(text)
         self.assertEqual(parsed["created_at"], "2026-10-02 00:00:00+00:00")
+
+    def test_submit_cancels_when_receipt_serialization_fails(self):
+        @dataclass
+        class FakeJob:
+            created_at: datetime
+
+        class FakeApi:
+            def __init__(self, token):
+                self.token = token
+
+            def inspect_job(self, job_id):
+                return FakeJob(datetime(2026, 10, 2, tzinfo=timezone.utc))
+
+        cancelled = []
+
+        def fake_subprocess_run(command, **kwargs):
+            cancelled.append(command)
+            return SimpleNamespace(returncode=0)
+
+        public_key_b64, bootstrap_b64 = submission.require_local_material()
+        command = submission.build_job_command("qwen25_32b_instruct", public_key_b64, bootstrap_b64)
+        with tempfile.TemporaryDirectory() as temporary_root, \
+             patch.object(submission, "ROOT", Path(temporary_root)), \
+             patch.object(submission, "HfApi", FakeApi), \
+             patch.object(submission, "run", return_value="0123456789abcdef01234567"), \
+             patch.object(submission, "validate_job_receipt"), \
+             patch.object(submission, "receipt_json", side_effect=TypeError("datetime serialization failure")), \
+             patch.object(submission.subprocess, "run", side_effect=fake_subprocess_run), \
+             patch.dict(os.environ, {"HF_TOKEN": "hf_test_token"}, clear=False):
+            with self.assertRaisesRegex(TypeError, "datetime serialization failure"):
+                submission.submit_probe("qwen25_32b_instruct", public_key_b64, bootstrap_b64, command)
+        self.assertEqual(cancelled, [["hf", "jobs", "cancel", "0123456789abcdef01234567"]])
 
     def test_receipt_requires_the_signed_provider_identity(self):
         public_key_b64, bootstrap_b64 = submission.require_local_material()
