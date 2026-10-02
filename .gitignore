@@ -1,0 +1,6 @@
+# The private signing key is never stored in this repository.
+*.key
+*.pem
+!trust/v9-grounded.pub
+__pycache__/
+*.pyc
