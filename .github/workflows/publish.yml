@@ -1,4 +1,4 @@
-name: Publish private bootstrap image
+name: Publish public bootstrap image
 
 on:
   push:
@@ -24,13 +24,24 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/nist-grounded-v9-bootstrap:v1
+      - name: Make the non-secret bootstrap image pullable by HF Jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail-with-body --request PATCH \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --data '{"visibility":"public"}' \
+            "https://api.github.com/user/packages/container/nist-grounded-v9-bootstrap" > package.json
+          test "$(jq -r '.visibility' package.json)" = public
       - name: Verify published trust anchor and create attestation
         run: |
           image="ghcr.io/${{ github.repository_owner }}/nist-grounded-v9-bootstrap@${{ steps.build.outputs.digest }}"
           public_key_sha256="$(docker run --rm --entrypoint /bin/sh "$image" -c 'sha256sum /trust/v9-grounded.pub' | cut -d' ' -f1)"
           bootstrap_sha256="$(docker run --rm --entrypoint /bin/sh "$image" -c 'sha256sum /usr/local/bin/v9-bootstrap' | cut -d' ' -f1)"
           docker run --rm --entrypoint /bin/sh "$image" -c 'test -x /usr/local/bin/cosign; test -x /usr/local/bin/uv'
-          printf '{"schema_version":"v9-bootstrap-attestation-v1","image":"%s","public_key_sha256":"%s","bootstrap_sha256":"%s","source_commit":"%s"}\n' "$image" "$public_key_sha256" "$bootstrap_sha256" "$GITHUB_SHA" > bootstrap-attestation.json
+          printf '{"schema_version":"v9-bootstrap-attestation-v1","image":"%s","public_key_sha256":"%s","bootstrap_sha256":"%s","package_visibility":"public","source_commit":"%s"}\n' "$image" "$public_key_sha256" "$bootstrap_sha256" "$GITHUB_SHA" > bootstrap-attestation.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: bootstrap-attestation
