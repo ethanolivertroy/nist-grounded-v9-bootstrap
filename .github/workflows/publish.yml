@@ -24,8 +24,15 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/nist-grounded-v9-bootstrap:v1
-      - name: Verify published trust anchor and record digest
+      - name: Verify published trust anchor and create attestation
         run: |
           image="ghcr.io/${{ github.repository_owner }}/nist-grounded-v9-bootstrap@${{ steps.build.outputs.digest }}"
-          docker run --rm --entrypoint /bin/sh "$image" -c 'sha256sum /trust/v9-grounded.pub /usr/local/bin/v9-bootstrap; test -x /usr/local/bin/cosign; test -x /usr/local/bin/uv'
-          printf 'V9_BOOTSTRAP_IMAGE=%s\n' "$image"
+          public_key_sha256="$(docker run --rm --entrypoint /bin/sh "$image" -c 'sha256sum /trust/v9-grounded.pub' | cut -d' ' -f1)"
+          bootstrap_sha256="$(docker run --rm --entrypoint /bin/sh "$image" -c 'sha256sum /usr/local/bin/v9-bootstrap' | cut -d' ' -f1)"
+          docker run --rm --entrypoint /bin/sh "$image" -c 'test -x /usr/local/bin/cosign; test -x /usr/local/bin/uv'
+          printf '{"schema_version":"v9-bootstrap-attestation-v1","image":"%s","public_key_sha256":"%s","bootstrap_sha256":"%s","source_commit":"%s"}\n' "$image" "$public_key_sha256" "$bootstrap_sha256" "$GITHUB_SHA" > bootstrap-attestation.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bootstrap-attestation
+          path: bootstrap-attestation.json
+          if-no-files-found: error
