@@ -76,7 +76,7 @@ export HF_GROUNDED_PROJECT_ROOT="$verified_root/runtime"
 export HOME=/tmp/v9-home
 export UV_CACHE_DIR=/tmp/v9-home/.cache/uv
 exec setpriv --reuid=65532 --regid=65532 --clear-groups --inh-caps=-all \
-  /usr/local/bin/uv run --locked --python /usr/local/bin/python "$verified_root/runtime/scripts/eval_grounded_hf.py" \
+  timeout --foreground --signal=TERM --kill-after=60s 1740 /usr/local/bin/uv run --locked --python /usr/local/bin/python "$verified_root/runtime/scripts/eval_grounded_hf.py" \
   --base-model "$model_id" \
   --base-revision "$revision" \
   --report-repo "$report_repo" \
